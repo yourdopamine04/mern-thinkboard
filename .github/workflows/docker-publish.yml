@@ -5,8 +5,10 @@ on:
     branches: ["main"]
 
 env:
-  REGION: ${{ vars.GCP_REGION }}
-  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID || 'gcp-devops-lab-514504' }}
+  WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+  WIF_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT || secrets.GCP_SERVICE_ACCOUNT }}
   ARTIFACT_REPOSITORY: mern-thinkboard
   IMAGE_TAG: ${{ github.sha }}
 
@@ -21,12 +23,24 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Validate WIF configuration
+        shell: bash
+        run: |
+          if [ -z "${WIF_PROVIDER}" ]; then
+            echo "::error::GCP_WORKLOAD_IDENTITY_PROVIDER is missing. Add it as a repository variable or secret."
+            exit 1
+          fi
+          if [ -z "${WIF_SERVICE_ACCOUNT}" ]; then
+            echo "::error::GCP_SERVICE_ACCOUNT is missing. Add it as a repository variable or secret."
+            exit 1
+          fi
+
       - name: Authenticate to Google Cloud
         id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
           create_credentials_file: true
 
       - name: Set up gcloud
