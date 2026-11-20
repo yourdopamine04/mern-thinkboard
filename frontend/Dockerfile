@@ -24,8 +24,10 @@ RUN npm run build
 # =========================================
 FROM nginx:alpine AS runner
 
-# Menyalin nginx.conf buatan Anda ke direktori konfigurasi Nginx
+# Ganti marker BACKEND_URL pada saat container startup
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker-entrypoint.d/20-backend-url.sh /docker-entrypoint.d/20-backend-url.sh
+RUN chmod 0755 /docker-entrypoint.d/20-backend-url.sh
 # Salin hasil build dari tahap 'builder' ke direktori web server Nginx
 COPY --from=builder /app/dist /usr/share/nginx/html
 

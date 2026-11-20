@@ -1,38 +1,79 @@
-name: Build and push Docker image
+name: Build, push, and deploy
 
 on:
   push:
     branches: ["main"]
 
+env:
+  REGION: ${{ vars.GCP_REGION }}
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  ARTIFACT_REPOSITORY: mern-thinkboard
+  IMAGE_TAG: ${{ github.sha }}
+
 jobs:
-  build-and-push:
+  deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      id-token: write
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_TOKEN }}
-    
-     # backend
-      - name: Build and push image backend
-        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
         with:
-          context: ./backend
-          push: true
-          tags: yanuarrahman04/mern-thinkboard-backend:latest
-#test
-    # frontend
-      - name: Build and push image frontend
-        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
-        with:
-          context: ./frontend
-          push: true
-          tags: yanuarrahman04/mern-thinkboard-frontend:latest
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Artifact Registry Docker authentication
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push backend
+        run: |
+          docker build \
+            -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/backend:${IMAGE_TAG}" \
+            ./backend
+          docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/backend:${IMAGE_TAG}"
+
+      - name: Build and push frontend
+        run: |
+          docker build \
+            -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/frontend:${IMAGE_TAG}" \
+            ./frontend
+          docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/frontend:${IMAGE_TAG}"
+
+      - name: Deploy backend to Cloud Run
+        run: |
+          gcloud run deploy thinkboard-backend \
+            --region="${REGION}" \
+            --image="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/backend:${IMAGE_TAG}" \
+            --platform=managed \
+            --port=5000 \
+            --allow-unauthenticated \
+            --set-env-vars=NODE_ENV=production
+
+      - name: Read backend Cloud Run URL
+        id: backend
+        run: |
+          BACKEND_URL="$(gcloud run services describe thinkboard-backend \
+            --region="${REGION}" \
+            --format='value(status.url)')"
+          echo "url=${BACKEND_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy frontend to Cloud Run
+        run: |
+          gcloud run deploy thinkboard-frontend \
+            --region="${REGION}" \
+            --image="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/frontend:${IMAGE_TAG}" \
+            --platform=managed \
+            --allow-unauthenticated \
+            --set-env-vars="BACKEND_URL=${{ steps.backend.outputs.url }}"
